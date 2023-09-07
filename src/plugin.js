@@ -11,7 +11,7 @@ export default defineNuxtPlugin((nuxtApp) => {
   } else if (nuxtApp.payload && nuxtApp.payload.vuex) {
     store.replaceState(nuxtApp.payload.vuex)
   }
-
+  store.nuxtApp = nuxtApp;
   return {
     provide: {
       store,
