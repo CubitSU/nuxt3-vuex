@@ -1,7 +1,7 @@
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { defineNuxtModule, addPlugin, addImports, addTemplate, createResolver } from '@nuxt/kit'
-import glob from 'glob'
+import glob from 'fast-glob'
 
 function addModule (storeModule, namespaces, alias) {
   if (!namespaces.length) {
@@ -11,20 +11,25 @@ function addModule (storeModule, namespaces, alias) {
   const namespace = namespaces.shift()
 
   storeModule.modules[namespace] = storeModule.modules[namespace] || {}
-  storeModule.modules[namespace].alias = storeModule.modules[namespace].alias || alias
   storeModule.modules[namespace].modules = storeModule.modules[namespace].modules || {}
+
+  const isFinalNamespace = namespaces.length === 0
+  if (isFinalNamespace) {
+    storeModule.modules[namespace].alias = alias
+    return
+  }
 
   return addModule(storeModule.modules[namespace], namespaces, alias)
 }
 
 function makeModulesString (modules) {
-  if (! modules) {return}
+  if (!modules) { return }
   const entries = Object.entries(modules)
 
   return '{' + entries.map(([key, val]) => {
     return `
       ${key}: {
-        ...${val.alias},
+        ${val.alias ? `...${val.alias},` : ''}
         namespaced: true,
         modules: ${makeModulesString(val.modules)}
       }
@@ -34,11 +39,11 @@ function makeModulesString (modules) {
 
 export const register = {
   vuexStores ({ fullStoreDir, exclude = [] }) {
-    const imports = [], aliases = [], store = { modules: {} }
+    const imports = []; const aliases = []; const store = { modules: {} }
     let rootStore
     const pattern = `${fullStoreDir}/**/!(*.test)*+(.mjs|.ts|.js)`
     const storeDefinitionFiles = (glob.sync(pattern))
-      .filter(file => ! exclude.includes(file))
+      .filter(file => !exclude.includes(file))
 
     storeDefinitionFiles.forEach((f) => {
       const path = f
@@ -51,13 +56,17 @@ export const register = {
       imports.push({ from: f, name: '*', as: alias })
       aliases.push(alias)
 
-      if (! rootStore && alias === 'indexVuexStore') {
+      if (!rootStore && alias === 'indexVuexStore') {
         // Root
         rootStore = alias
       } else {
         // Modules
         const namespace = path.replace(/\.(js|mjs|ts)$/, '')
         const namespaces = namespace.split('/')
+        const isNamespaceIndexFile = namespaces[namespaces.length - 1] === 'index'
+        if (isNamespaceIndexFile) {
+          namespaces.pop()
+        }
         addModule(store, namespaces, alias)
       }
     })
@@ -75,7 +84,7 @@ export const register = {
     const contents = [
       `import {\n  ${aliases.join(',\n  ')} \n} from "#imports"`,
       `const VuexStore = ${vuexStoreStr}`,
-      `export default VuexStore`,
+      'export default VuexStore',
     ].join('\n')
 
     addTemplate({ filename: 'vuexStore.js', getContents: () => contents })
@@ -89,7 +98,11 @@ export default defineNuxtModule({
       exclude = [],
     } = moduleOptions
 
-    const fullStoreDir = resolve(nuxt.options.srcDir, storeDir).replace(/\\/g, '/')
+    let fullStoreDir = resolve(nuxt.options.srcDir, storeDir)
+    if (process.platform === 'win32') {
+      fullStoreDir = fullStoreDir.replace(/\\/g, '/')
+    }
+
     if (existsSync(fullStoreDir)) {
       const { resolve } = createResolver(import.meta.url)
       register.vuexStores({ fullStoreDir, exclude })
